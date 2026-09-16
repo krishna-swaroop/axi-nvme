@@ -1,0 +1,13 @@
+.venv/
+.deps/
+build/
+reports/*
+!reports/README.md
+__pycache__/
+.pytest_cache/
+*.vcd
+*.fst
+.DS_Store
+*.jou
+*.log
+.Xil/

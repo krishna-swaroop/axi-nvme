@@ -1,0 +1,8 @@
+{
+  "input_gbps": 10.0,
+  "stall_ms": 100.0,
+  "margin": 1.25,
+  "pl_buffer_mib": 256,
+  "ssd_service_gbps": 14.0,
+  "notes": "Design scenario only. 14 Gbit/s service and 100 ms stalls are not measured SSD guarantees. Additional queue, record and memory-controller reserves are required."
+}

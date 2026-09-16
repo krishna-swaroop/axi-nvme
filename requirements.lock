@@ -1,0 +1,20 @@
+certifi==2026.7.22
+charset-normalizer==3.5.1
+cocotb==2.0.1
+colorama==0.4.6
+find_libpython==0.5.1
+idna==3.19
+iniconfig==2.3.0
+litenvme @ git+https://github.com/enjoy-digital/litenvme.git@ce9c478c3df794685e50bab503ab4a7764b6f983
+litepcie @ git+https://github.com/enjoy-digital/litepcie.git@c4ac65f3340f7ded11470ebec165ae06c563def6
+litex @ git+https://github.com/enjoy-digital/litex.git@f1e5a3a901237e6efdd44905c7ddbac7f7a362b7
+migen @ git+https://git.m-labs.hk/M-Labs/migen.git@4c2ae8dfeea37f235b52acb8166f12acaaae4f7c
+packaging==25.0
+pluggy==1.6.0
+Pygments==2.21.0
+pyserial==3.5
+pytest==8.4.2
+PyYAML==6.0.2
+requests==2.34.2
+setuptools==80.9.0
+urllib3==2.8.0
