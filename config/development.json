@@ -1,0 +1,29 @@
+{
+  "repositories": {
+    "litepcie": {
+      "url": "https://github.com/krishna-swaroop/litepcie.git",
+      "commit": "bc01a294422f4f7a7ed723863e4304e96b42e2c8",
+      "qualification_stage": "litepcie-targeted-transport-regression",
+      "qualification_scope": "Targeted transport regression; this does not run the full LitePCIe suite.",
+      "pytest_paths": [
+        "test/test_rootport_cfg_write.py",
+        "test/test_tlp_controller.py",
+        "test/test_completion_packetizer.py",
+        "test/test_request_packetizer.py",
+        "test/test_header_extracter.py",
+        "test/test_header_inserter.py",
+        "test/test_header_inserter_tails.py"
+      ]
+    },
+    "litenvme": {
+      "url": "https://github.com/krishna-swaroop/litenvme.git",
+      "commit": "8f59010a00db1ef7c904c7a14aed5c279ca140e3",
+      "qualification_stage": "litenvme-full-suite",
+      "qualification_scope": "Full LiteNVMe test suite.",
+      "pytest_paths": [
+        "test"
+      ]
+    }
+  },
+  "test_timeout_seconds": 1200
+}

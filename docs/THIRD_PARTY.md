@@ -9,6 +9,8 @@ Keep original copyright and license notices if source is later redistributed.
 | enjoy-digital/litenvme | ce9c478c3df794685e50bab503ab4a7764b6f983 | BSD-2-Clause; evaluation dependency |
 | enjoy-digital/litepcie | c4ac65f3340f7ded11470ebec165ae06c563def6 | BSD-2-Clause; evaluation dependency |
 | enjoy-digital/litex | See requirements.lock | BSD-2-Clause; generator dependency |
+| krishna-swaroop/litenvme | See config/development.json | BSD-2-Clause; stream-ring development fork of enjoy-digital/litenvme |
+| krishna-swaroop/litepcie | See config/development.json | BSD-2-Clause; Root Port configuration-write completion fix |
 | M-Labs/migen | See requirements.lock | BSD-2-Clause; generator/simulation dependency |
 | DUNE/pl-nvme | 971d95f5c89ad6e9960fae62d51cd82545856706 | GPL-3.0-or-later in inspected VHDL; research only |
 | yhqiu16/NVMeCHA | f9a9a2e6ab2dc75650d154e17f62ab72b461742b | GPL-3.0 repository; endpoint research only |
