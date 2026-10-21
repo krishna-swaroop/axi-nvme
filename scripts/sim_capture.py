@@ -205,6 +205,27 @@ def write_junit(aggregate: ET.Element, destination: Path) -> None:
     ET.ElementTree(aggregate).write(destination, encoding="utf-8", xml_declaration=True)
 
 
+def yosys_parameter_int(parameters: dict[str, object], name: str) -> int:
+    raw = parameters.get(name)
+    if isinstance(raw, int):
+        return raw
+    bits = str(raw) if raw is not None else ""
+    if not bits or any(bit not in "01" for bit in bits):
+        raise RuntimeError(f"Yosys memory parameter {name} is missing or non-binary: {raw!r}")
+    return int(bits, 2)
+
+
+def yosys_parameter_text(raw: object) -> str:
+    if not isinstance(raw, str):
+        return str(raw)
+    if raw and len(raw) % 8 == 0 and set(raw) <= {"0", "1"}:
+        decoded = bytes(int(raw[offset:offset + 8], 2)
+                        for offset in range(0, len(raw), 8)).decode("ascii", errors="ignore")
+        if decoded and all(character.isprintable() for character in decoded):
+            return decoded
+    return raw
+
+
 def yosys_check(report_dir: Path) -> dict[str, object]:
     synth_dir = report_dir / "yosys"
     synth_dir.mkdir(parents=True, exist_ok=True)
@@ -221,6 +242,9 @@ def yosys_check(report_dir: Path) -> dict[str, object]:
         "opt",
         "memory_dff",
         "memory_collect",
+        # memory_dff may leave obsolete $memrd output wires after merging their
+        # registers into memories. Clean those wires before the strict check pass.
+        "opt_clean",
         "check -assert",
         "select -assert-none t:$dlatch t:$adlatch",
         "stat",
@@ -234,25 +258,50 @@ def yosys_check(report_dir: Path) -> dict[str, object]:
         raise RuntimeError("Yosys completed without producing its JSON netlist")
 
     netlist = json.loads(json_path.read_text(encoding="utf-8"))
-    cells = [cell for module in netlist.get("modules", {}).values()
-             for cell in module.get("cells", {}).values()]
-    memories = [cell for cell in cells if cell.get("type") == "$mem_v2"]
-    if not memories:
-        raise RuntimeError("Yosys netlist contains no inferred $mem_v2 staging memory")
-    sync_reads = []
-    for cell in memories:
-        raw = cell.get("parameters", {}).get("RD_CLK_ENABLE", "")
-        if isinstance(raw, list):
-            raw = "".join(str(bit) for bit in raw)
-        if isinstance(raw, str):
-            sync_reads.append(bool(raw) and set(raw) == {"1"})
-        else:
-            sync_reads.append(bool(raw))
-    if not all(sync_reads):
-        raise RuntimeError("Yosys staging memory has an asynchronous read port")
+    memories = []
+    payload_memories = []
+    for module in netlist.get("modules", {}).values():
+        for cell_name, cell in module.get("cells", {}).items():
+            if cell.get("type") != "$mem_v2":
+                continue
+            memories.append((cell_name, cell))
+            parameters = cell.get("parameters", {})
+            memory_id = yosys_parameter_text(parameters.get("MEMID", ""))
+            if "staging_ram" in f"{cell_name} {memory_id}".lower():
+                payload_memories.append((cell_name, cell))
+
+    if len(payload_memories) != 1:
+        found = [name for name, _ in payload_memories]
+        raise RuntimeError(
+            "expected exactly one inferred staging_ram $mem_v2 payload memory; "
+            f"found {len(payload_memories)} ({found})"
+        )
+
+    payload_name, payload_cell = payload_memories[0]
+    parameters = payload_cell.get("parameters", {})
+    expected_parameters = {
+        "WIDTH": 256,
+        "SIZE": 512,
+        "RD_PORTS": 1,
+        "WR_PORTS": 1,
+        "RD_CLK_ENABLE": 1,
+        "WR_CLK_ENABLE": 1,
+    }
+    observed_parameters = {
+        key: yosys_parameter_int(parameters, key) for key in expected_parameters
+    }
+    if observed_parameters != expected_parameters:
+        raise RuntimeError(
+            "Yosys staging_ram payload memory has unexpected shape or clocking: "
+            f"expected {expected_parameters}, found {observed_parameters}"
+        )
+
+    metadata_memories = [name for name, _ in memories if name != payload_name]
     return {"json": str(json_path.relative_to(ROOT)),
             "log": str(log_path.relative_to(ROOT)),
-            "memory_cells": len(memories), "synchronous_read_ports": sync_reads}
+            "memory_cells": len(memories),
+            "payload_memory": {"cell": payload_name, **observed_parameters},
+            "metadata_memory_cells": metadata_memories}
 
 
 def main(argv: list[str] | None = None) -> int:
