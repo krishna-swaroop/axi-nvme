@@ -1,0 +1,54 @@
+name: capture-stager
+on:
+  push:
+    branches: [main]
+    paths:
+      - rtl/stream/**
+      - tests/stream/**
+      - scripts/sim_capture.py
+      - .github/workflows/capture.yml
+      - docs/contracts/PORTABLE_CAPTURE_V1.md
+      - requirements-portable.lock
+  pull_request:
+    paths:
+      - rtl/stream/**
+      - tests/stream/**
+      - scripts/sim_capture.py
+      - .github/workflows/capture.yml
+      - docs/contracts/PORTABLE_CAPTURE_V1.md
+      - requirements-portable.lock
+permissions:
+  contents: read
+jobs:
+  portable-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Install Icarus and Yosys
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog yosys
+      - name: Install pinned portable dependencies
+        run: |
+          python -m venv .venv-portable
+          .venv-portable/bin/python -m pip install -r requirements-portable.lock
+      - name: Run capture simulation and structural synthesis
+        env:
+          COCOTB_RANDOM_SEED: '20261021'
+        run: .venv-portable/bin/python scripts/sim_capture.py
+      - name: Retain capture qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: capture-stager-evidence
+          path: |
+            reports/capture/
+            build/capture/**/*.fst
+            build/capture/**/*.log
+          retention-days: 14
