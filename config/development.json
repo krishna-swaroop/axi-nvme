@@ -17,7 +17,7 @@
     },
     "litenvme": {
       "url": "https://github.com/krishna-swaroop/litenvme.git",
-      "commit": "bea70312f78e1e6f7d5ddec0b89bc831c3aea491",
+      "commit": "ec77a9772e8ef32633acc21b658806c8f63780d0",
       "qualification_stage": "litenvme-full-suite",
       "qualification_scope": "Full LiteNVMe test suite.",
       "pytest_paths": [
