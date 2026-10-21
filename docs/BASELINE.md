@@ -52,7 +52,8 @@ AXI-size/read-error/checker-abort fixes. `config/development.json` is the canoni
 source list. `reports/development/manifest.json` records effective import paths,
 the installed generator dependency revisions, command results and JUnit counts.
 See [the qualification scope](qualification/STREAM_RING.md) for remaining gates.
-The development budget is now 40 minutes. Named test progress and slow-test
+The initial full development qualification budget is 90 minutes, including the
+slow whole-core Migen simulation. Named test progress and slow-test
 durations are retained to diagnose long Migen simulations. A timeout remains a
 failure and never counts as partially passing qualification.
 

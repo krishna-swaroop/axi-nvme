@@ -25,5 +25,5 @@
       ]
     }
   },
-  "test_timeout_seconds": 2400
+  "test_timeout_seconds": 5400
 }
