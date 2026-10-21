@@ -40,7 +40,7 @@ if __name__ == "__main__":
     versions["dependencies"] = subprocess.check_output(
         [sys.executable, "-m", "pip", "freeze"], text=True)
     (REPORTS / "environment.json").write_text(json.dumps(versions, indent=2))
-    run("unit", [sys.executable, "-m", "pytest", "-q", "tests/test_budget.py",
+    run("unit", [sys.executable, "-m", "pytest", "-q", "tests/test_budget.py", "tests/test_qualification_runner.py",
                  f"--junitxml={REPORTS / 'unit.xml'}"])
     run("rtl-smoke", [sys.executable, "scripts/sim.py"])
-    print("PASS: planning tests and RTL harness canary; not NVMe acceptance")
+    print("PASS: planning/provenance tests and RTL harness canary; NVMe qualification runs separately")
