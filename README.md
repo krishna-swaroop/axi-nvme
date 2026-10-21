@@ -43,6 +43,7 @@ DMA service, completions, and buffer management must operate autonomously.
 5. [Validation matrix](docs/VERIFICATION.md)
 6. [Initial measured results](docs/BASELINE.md)
 7. [Current stream-ring qualification](docs/qualification/STREAM_RING.md)
+8. [Portable capture and recovery contracts](docs/contracts/PORTABLE_CAPTURE_V1.md)
 
 ## Run the feedback loop
 

@@ -1,5 +1,6 @@
 .venv/
 .venv-development/
+.venv-portable/
 .deps/
 build/
 reports/*
