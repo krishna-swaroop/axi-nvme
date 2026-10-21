@@ -1,0 +1,18 @@
+{
+  "profile": "synthetic_capture_v1",
+  "abi_version": 65536,
+  "simulation_only": true,
+  "data_width": 256,
+  "chunk_beats": 128,
+  "staging_banks": 4,
+  "ddr_slots": 8,
+  "timeout_cycles": 256,
+  "namespace": {
+    "nsid": 1,
+    "nsze": 2097152,
+    "lba_bytes": 512,
+    "host_max_command_bytes": 4096,
+    "drive_max_command_bytes": null
+  },
+  "notes": "Synthetic full-beat fixed-chunk model; no physical camera framing, actual SSD capabilities, DDR service or FPGA timing is inferred."
+}
