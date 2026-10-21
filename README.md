@@ -3,7 +3,7 @@
 An open-source project for FPGA-resident NVMe storage on AMD UltraScale+
 devices, with AXI4-Stream payloads and no CPU, Linux, or PS DDR in the data path.
 
-**Status: stream-ring prototype and executable qualification.** The development
+**Status: stream-ring prototype and shared PL-DDR simulation.** The development
 configuration pins the FPGA host implementation, external configuration library,
 and independent SSD models in our LiteNVMe/LitePCIe forks. Board implementation,
 timing closure and sustained real-SSD capture remain qualification gates.
@@ -24,9 +24,10 @@ DMA service, completions, and buffer management must operate autonomously.
   ZCU102 can exercise capture/buffering, but direct SSD validation needs a
   suitable device or a separately validated PCIe implementation. See
   [hardware feasibility](boards/zcu102/README.md).
-- **Preferred prototype: an available ZU7EG devkit.** The owner also has ZU7EG
-  boards, whose devices include PL PCIe. Exact board/part/slot routing still needs
-  qualification; see [ZU7EG target record](boards/zu7eg/README.md).
+- **First hardware target: custom PZ17 SoM, XCZU17EG-1FFVC1760E.** A Linux
+  workstation with Vivado/Vitis is available. Board routing and the vendor shell
+  still need qualification; see [PZ17 target record](docs/hardware/PZ17_TARGET.md).
+  The available ZU7EG boards remain alternatives.
 - **Non-pausable ingest needs stall capacity.** 10 Gbit/s is 1.25 GB/s; 100 ms
   with no SSD progress consumes 125 MB. Plan PL-attached DDR, while keeping the
   user-facing payload interface AXI4-Stream. No finite buffer guarantees capture
@@ -44,6 +45,7 @@ DMA service, completions, and buffer management must operate autonomously.
 6. [Initial measured results](docs/BASELINE.md)
 7. [Current stream-ring qualification](docs/qualification/STREAM_RING.md)
 8. [Portable capture and recovery contracts](docs/contracts/PORTABLE_CAPTURE_V1.md)
+9. [Shared PL-DDR integration gate](docs/qualification/PL_DDR.md)
 
 ## Run the feedback loop
 
@@ -79,6 +81,13 @@ The current ring can apply AXI backpressure. Non-pausable camera capture still
 requires the PL DDR capture buffer, overflow policy and service-envelope tests
 specified in the roadmap. Successful simulation does not establish lossless
 recording or real SSD bandwidth.
+
+`scripts/sim_ddr.py` tests a portable capture writer and the real host-memory
+responder sharing one AXI RAM through LiteX arbitration. It records four profiles
+and checks memory visibility, byte-exact readback, stalls, aborts and faults.
+Its default gate requires Yosys for structural synthesis; `--simulation-only`
+explicitly records synthesis as unrun on a Mac without Yosys. See the
+[DDR gate](docs/qualification/PL_DDR.md) for reproducible commands and limits.
 
 ## Licensing and boundaries
 

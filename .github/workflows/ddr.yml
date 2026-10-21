@@ -1,0 +1,58 @@
+name: shared-ddr
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'rtl/memory/**'
+      - 'tests/memory/**'
+      - 'gateware/hostmem_ddr_fixture.py'
+      - 'scripts/sim_ddr.py'
+      - 'scripts/qualify.py'
+      - 'docs/contracts/PL_DDR_W08A.md'
+      - 'docs/hardware/PZ17_TARGET.md'
+      - 'config/development.json'
+      - 'requirements-development.lock'
+      - '.github/workflows/ddr.yml'
+  pull_request:
+    paths:
+      - 'rtl/memory/**'
+      - 'tests/memory/**'
+      - 'gateware/hostmem_ddr_fixture.py'
+      - 'scripts/sim_ddr.py'
+      - 'scripts/qualify.py'
+      - 'docs/contracts/PL_DDR_W08A.md'
+      - 'docs/hardware/PZ17_TARGET.md'
+      - 'config/development.json'
+      - 'requirements-development.lock'
+      - '.github/workflows/ddr.yml'
+permissions:
+  contents: read
+jobs:
+  shared-ddr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Install simulation tools and pinned generator dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog yosys
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements-development.lock
+      - name: Qualify shared DDR writer and actual host-memory responder
+        run: .venv/bin/python scripts/sim_ddr.py
+      - name: Retain shared-memory evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: shared-ddr-evidence
+          path: |
+            reports/ddr/
+            build/ddr/boundary*/
+            build/ddr/nominal*/
+          retention-days: 14
