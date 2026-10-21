@@ -39,9 +39,12 @@ represented by a model; FPGA implementation is not part of that test.
    256-bit Icarus test reproduced `AWSIZE=6`, where 32 bytes requires 5.
 3. **Qualification could import stale packages.** The runner verifies clean
    immutable source checkouts, checks effective package origins and generator
-   dependency provenance, removes stale JUnit files, and verifies sources again
-   after the run. A pre-existing installed upstream package is never silently
-   accepted as the stream-ring implementation.
+   dependency provenance, enforces ordinary Python version pins, removes stale
+   JUnit files, and verifies sources again after the run. A pre-existing installed
+   upstream package is never silently accepted as the stream-ring implementation.
+4. **An errored write tainted an idle read checker.** Integrated checker abort
+   now requires an active check as well as errored streamer retirement. The
+   regression covers idle write failure and active truncated-read restart.
 
 ## Reproduce
 
@@ -62,6 +65,10 @@ Evidence is written to `reports/development/`: manifest, per-command output,
 JUnit and generated-RTL metadata. Icarus waveforms and generated Verilog are in
 `build/qualification/`. Local results and CI links are recorded in BASELINE.md
 after the corresponding checks finish.
+
+Local manifests record project edits; they do not bind those edits to an exact
+commit. Clean CI is the commit-bound evidence. Python versions and Git revisions
+are enforced, but package artifact hashes and simulator binaries are not pinned.
 
 The transport stage explicitly selects seven TLP/header/configuration test files;
 it is not a claim that every LitePCIe board generator or endpoint feature was

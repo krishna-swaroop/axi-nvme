@@ -51,6 +51,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--junitxml", type=Path, default=ROOT / "reports/development/generated.xml")
     args = parser.parse_args()
+    args.junitxml = args.junitxml.resolve()
     for executable in ("iverilog", "vvp"):
         if not shutil.which(executable):
             raise SystemExit(f"Missing required simulator: {executable}")
@@ -80,7 +81,9 @@ def main():
         for child in tree.getroot():
             suite.append(child)
         metadata["configurations"].append({"width": width, "tests": len(cases),
-                                           "seed": 20261021 + width, "result": str(result)})
+                                           "cocotb_seed": 20261021 + width,
+                                           "stimulus_seed": 0x4E564D45 + width,
+                                           "result": str(result)})
     ET.ElementTree(suite).write(args.junitxml, encoding="unicode")
     (args.junitxml.parent / "generated-manifest.json").write_text(json.dumps(metadata, indent=2))
 

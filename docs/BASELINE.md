@@ -37,20 +37,28 @@ the development PR is isolated from those pre-existing files.
 
 | Check executed on this Mac | Result |
 |---|---|
-| `make check` | 18 planning/provenance tests and 1 Icarus harness test passed |
+| `make check` | 23 planning/provenance tests and 1 Icarus harness test passed |
 | `make upstream-test` | 46 passed, no failures/skips, 261.17 seconds |
 | PCIe targeted transport regression | 45 passed, no failures/skips |
 | Generated stream DMA in Icarus | 4 passed: 64, 128, 256 and 512 bits |
 | New failed-read tests | 6 passed after 5 original stale-data failures were reproduced |
 | New AXI transfer-size tests | 5 passed after 4 original failures were reproduced |
-| Pattern abort/restart and integration | 2 new tests passed; existing pattern and CSR smoke also passed |
-| Combined pinned development qualification | Running; final manifest/CI result will be recorded here |
+| Pattern abort/restart and integration | 3 passed, including idle-checker regression; existing pattern roundtrip also passed |
+| Initial combined local qualification | Failed at the 20-minute wall-clock limit in the whole-core test; 79/81 NVMe cases completed without an observed failure, but no aggregate NVMe JUnit pass was produced |
+| Clean Linux qualification | Required on the development PR; use its checks and retained artifacts for the final result |
 
 The development pins include the restored stream-ring integration plus reviewed
 AXI-size/read-error/checker-abort fixes. `config/development.json` is the canonical
 source list. `reports/development/manifest.json` records effective import paths,
 the installed generator dependency revisions, command results and JUnit counts.
 See [the qualification scope](qualification/STREAM_RING.md) for remaining gates.
+The development budget is now 40 minutes. Named test progress and slow-test
+durations are retained to diagnose long Migen simulations. A timeout remains a
+failure and never counts as partially passing qualification.
+
+The local run recorded a modified project checkout. The clean commit-bound
+qualification and its evidence are published through
+[the development PR](https://github.com/krishna-swaroop/axi-nvme/pull/1).
 
 No Vivado synthesis, implementation, timing closure, hardware programming or SSD
 writes were performed in this checkpoint. The 10 Gbit/s capture goal remains

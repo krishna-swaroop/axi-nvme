@@ -25,6 +25,8 @@ REPORTS = ROOT / "reports" / "development"
 REPOSITORY_NAMES = ("litepcie", "litenvme")
 PYTHON_DISTRIBUTIONS = ("litex", "migen", "litepcie", "litenvme")
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_DIST_NAME_RE = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?"
+_VERSION_RE = r"[A-Za-z0-9][A-Za-z0-9.!+_-]*"
 
 
 class QualificationError(RuntimeError):
@@ -44,22 +46,46 @@ def _normalize_repo_url(url: str) -> str:
     return value[:-1] if value.endswith("/") else value
 
 
+def parse_development_lock(lock_path: Path) -> tuple[dict[str, dict[str, str]], dict[str, str]]:
+    """Parse the deliberately small lock grammar: exact versions or immutable Git refs."""
+    pins: dict[str, dict[str, str]] = {}
+    version_pins: dict[str, str] = {}
+    for line_number, raw_line in enumerate(lock_path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        vcs_match = re.fullmatch(rf"(?P<name>{_DIST_NAME_RE})\s+@\s+(?P<target>\S+)", line)
+        if vcs_match:
+            name, target = vcs_match.group("name", "target")
+            if not target.startswith("git+"):
+                raise QualificationError(f"unsupported development lock syntax on line {line_number}: {line}")
+            url, separator, commit = target.rpartition("@")
+            if not separator or not url.startswith("git+") or not _SHA_RE.fullmatch(commit):
+                raise QualificationError(f"VCS lock entry is not pinned to a full SHA on line {line_number}: {line}")
+            key = _normalized_distribution_name(name)
+            if key in pins or key in version_pins:
+                raise QualificationError(f"duplicate development lock entry for {name}")
+            pins[key] = {"url": _normalize_repo_url(url), "commit": commit}
+            continue
+
+        version_match = re.fullmatch(rf"(?P<name>{_DIST_NAME_RE})==(?P<version>{_VERSION_RE})", line)
+        if version_match:
+            name, version = version_match.group("name", "version")
+            key = _normalized_distribution_name(name)
+            if key in pins or key in version_pins:
+                raise QualificationError(f"duplicate development lock entry for {name}")
+            version_pins[key] = version
+            continue
+
+        raise QualificationError(f"unsupported development lock syntax on line {line_number}: {line}")
+    if not version_pins:
+        raise QualificationError("development lock has no exact ordinary version pins")
+    return pins, version_pins
+
+
 def parse_vcs_lock(lock_path: Path) -> dict[str, dict[str, str]]:
     """Read immutable PEP 508 VCS pins from the development lock."""
-    pins: dict[str, dict[str, str]] = {}
-    for raw_line in lock_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or " @ git+" not in line:
-            continue
-        name, target = line.split(" @ ", 1)
-        url, separator, commit = target.partition("@")
-        if not separator or not _SHA_RE.fullmatch(commit):
-            raise QualificationError(f"VCS lock entry is not pinned to a full SHA: {line}")
-        key = _normalized_distribution_name(name)
-        if key in pins:
-            raise QualificationError(f"Duplicate VCS lock entry for {name}")
-        pins[key] = {"url": _normalize_repo_url(url), "commit": commit}
-    return pins
+    return parse_development_lock(lock_path)[0]
 
 
 def _validate_pytest_path_lists(repositories: dict) -> dict[str, list[str]]:
@@ -124,7 +150,7 @@ def load_config(config_path: Path = CONFIG_PATH, lock_path: Path = LOCK_PATH) ->
     if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
         raise QualificationError("test_timeout_seconds must be a positive integer")
 
-    pins = parse_vcs_lock(lock_path)
+    pins, version_pins = parse_development_lock(lock_path)
     for name in (*REPOSITORY_NAMES, "litex", "migen"):
         key = _normalized_distribution_name(name)
         if key not in pins:
@@ -138,6 +164,7 @@ def load_config(config_path: Path = CONFIG_PATH, lock_path: Path = LOCK_PATH) ->
     config["_config_path"] = str(config_path.resolve())
     config["_lock_path"] = str(lock_path.resolve())
     config["_lock_pins"] = pins
+    config["_version_pins"] = version_pins
     return config
 
 
@@ -308,6 +335,37 @@ def verify_python_provenance(
             "import_origin": imported_module,
         }
     return result
+
+
+def verify_python_version_pins(version_pins: dict[str, str], *, manifest: dict | None = None) -> dict:
+    """Check every exact ordinary lock pin and record expected/installed versions."""
+    records = {}
+    failures = []
+    for name, expected in version_pins.items():
+        try:
+            distribution = importlib.metadata.distribution(name)
+        except importlib.metadata.PackageNotFoundError:
+            actual = None
+            matches = False
+        else:
+            actual = distribution.version
+            matches = actual == expected
+        records[name] = {
+            "expected_version": expected,
+            "actual_version": actual,
+            "matches_lock": matches,
+        }
+        if not matches:
+            if actual is None:
+                failures.append(f"{name} is not installed (expected {expected})")
+            else:
+                failures.append(f"{name} version mismatch: got {actual}, expected {expected}")
+
+    if manifest is not None:
+        manifest["python_version_provenance"] = records
+    if failures:
+        raise QualificationError("ordinary Python version pin validation failed: " + "; ".join(failures))
+    return records
 
 
 def build_python_env(source_paths: dict[str, Path], base_env: dict[str, str] | None = None) -> dict[str, str]:
@@ -525,6 +583,7 @@ def qualify(
         "source_root": str(Path(source_root).resolve()) if source_root else None,
         "repositories": {},
         "python_provenance": {},
+        "python_version_provenance": {},
         "python_imports": {},
         "commands": [],
         "suite_reports": [],
@@ -537,6 +596,7 @@ def qualify(
         config = load_config(Path(config_path), Path(lock_path))
         manifest["config"] = {k: v for k, v in config.items() if not k.startswith("_")}
         manifest["dependency_lock_pins"] = config["_lock_pins"]
+        manifest["dependency_lock_version_pins"] = config["_version_pins"]
 
         git = shutil.which("git")
         if not git:
@@ -569,6 +629,7 @@ def qualify(
         manifest["installed_python_packages"] = Path(pip_freeze["stdout"]).read_text(
             encoding="utf-8", errors="replace",
         ).splitlines()
+        verify_python_version_pins(config["_version_pins"], manifest=manifest)
         source_paths: dict[str, Path] = {}
         if source_root is not None:
             source_base = Path(source_root).resolve()
@@ -611,17 +672,22 @@ def qualify(
                 report_dir / f"{name}.xml",
             ))
         for name, stage, checkout, pytest_paths, junit_path in suite_commands:
+            stage_env = dict(env)
+            if name == "litenvme":
+                # Retain initialization/transfer progress even if a long model times out.
+                stage_env["LITENVME_SIM_VERBOSE"] = "1"
             result = _run_checked(
                 manifest,
                 name=f"pytest-{name}",
                 args=[
-                    sys.executable, "-m", "pytest", "-q", "--tb=short",
+                    sys.executable, "-m", "pytest", "-v", "--tb=short",
+                    "--capture=tee-sys", "--durations=10",
                     f"--junitxml={junit_path}", *pytest_paths,
                 ],
                 cwd=checkout,
                 reports=report_dir,
                 deadline=deadline,
-                env=env,
+                env=stage_env,
             )
             manifest.setdefault("stages", {})[stage] = {
                 "repository": name,

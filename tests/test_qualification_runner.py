@@ -7,15 +7,18 @@ from types import SimpleNamespace
 
 import pytest
 
+from scripts import qualify as qualification
 from scripts.qualify import (
     QualificationError,
     build_python_env,
     load_config,
+    parse_development_lock,
     parse_junit,
     run_command,
     validate_junit,
     verify_checkout,
     verify_installed_module_origin,
+    verify_python_version_pins,
     validate_pytest_paths,
 )
 
@@ -47,18 +50,42 @@ def _write_junit(path: Path, *, cases: str) -> None:
     path.write_text(f"<testsuite name='fixture'>{cases}</testsuite>\n", encoding="utf-8")
 
 
-def test_development_config_and_lock_share_immutable_fork_pins():
+def _make_configured_test_paths(tmp_path: Path, config: dict, *, omit: tuple[str, str] | None = None):
+    source_paths = {}
+    for repository, item in config["repositories"].items():
+        checkout = tmp_path / repository
+        source_paths[repository] = checkout
+        for relative in item["pytest_paths"]:
+            if omit == (repository, relative):
+                continue
+            candidate = checkout.joinpath(*Path(relative).parts)
+            if relative == "test" or relative.endswith("/"):
+                candidate.mkdir(parents=True, exist_ok=True)
+            else:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                candidate.touch()
+    return source_paths
+
+
+def test_development_config_and_lock_share_immutable_fork_pins(tmp_path: Path):
     config = load_config(ROOT / "config/development.json", ROOT / "requirements-development.lock")
     assert config["repositories"]["litenvme"]["commit"] == config["_lock_pins"]["litenvme"]["commit"]
     assert config["repositories"]["litepcie"]["commit"] == config["_lock_pins"]["litepcie"]["commit"]
     assert config["_lock_pins"]["litex"]["commit"]
     assert config["_lock_pins"]["migen"]["commit"]
-    selected = validate_pytest_paths(config, {
-        "litepcie": ROOT.parent / "litepcie",
-        "litenvme": ROOT.parent / "litenvme",
-    })
+    assert config["_version_pins"]["pytest"] == "8.4.2"
+    source_paths = _make_configured_test_paths(tmp_path, config)
+    selected = validate_pytest_paths(config, source_paths)
     assert selected["litepcie"] == config["repositories"]["litepcie"]["pytest_paths"]
     assert selected["litenvme"] == ["test"]
+
+
+def test_validate_pytest_paths_rejects_missing_configured_path(tmp_path: Path):
+    config = load_config(ROOT / "config/development.json", ROOT / "requirements-development.lock")
+    missing = config["repositories"]["litepcie"]["pytest_paths"][0]
+    source_paths = _make_configured_test_paths(tmp_path, config, omit=("litepcie", missing))
+    with pytest.raises(QualificationError, match="missing or escapes checkout"):
+        validate_pytest_paths(config, source_paths)
 
 
 def test_development_config_rejects_malformed_pytest_path(tmp_path: Path):
@@ -68,6 +95,56 @@ def test_development_config_rejects_malformed_pytest_path(tmp_path: Path):
     config_path.write_text(json.dumps(source), encoding="utf-8")
     with pytest.raises(QualificationError, match="under test/|contain no"):
         load_config(config_path, ROOT / "requirements-development.lock")
+
+
+def test_development_lock_rejects_unsupported_requirement_syntax(tmp_path: Path):
+    lock_path = tmp_path / "requirements.lock"
+    lock_path.write_text("pytest>=8.0\n", encoding="utf-8")
+    with pytest.raises(QualificationError, match="unsupported development lock syntax"):
+        parse_development_lock(lock_path)
+
+
+def test_ordinary_lock_versions_match_and_are_recorded(monkeypatch):
+    calls = []
+
+    def distribution(name):
+        calls.append(name)
+        return SimpleNamespace(version={"pygments": "2.21.0", "pyyaml": "6.0.2"}[name])
+
+    monkeypatch.setattr(qualification.importlib.metadata, "distribution", distribution)
+    manifest = {}
+    result = verify_python_version_pins({"pygments": "2.21.0", "pyyaml": "6.0.2"}, manifest=manifest)
+    assert calls == ["pygments", "pyyaml"]
+    assert result == manifest["python_version_provenance"]
+    assert result["pygments"] == {
+        "expected_version": "2.21.0", "actual_version": "2.21.0", "matches_lock": True,
+    }
+
+
+def test_ordinary_lock_version_mismatch_is_recorded_and_rejected(monkeypatch):
+    monkeypatch.setattr(
+        qualification.importlib.metadata, "distribution",
+        lambda _name: SimpleNamespace(version="8.3.0"),
+    )
+    manifest = {}
+    with pytest.raises(QualificationError, match="pytest version mismatch"):
+        verify_python_version_pins({"pytest": "8.4.2"}, manifest=manifest)
+    assert manifest["python_version_provenance"]["pytest"] == {
+        "expected_version": "8.4.2", "actual_version": "8.3.0", "matches_lock": False,
+    }
+
+
+def test_ordinary_lock_missing_distribution_is_recorded_and_rejected(monkeypatch):
+    def missing(name):
+        raise qualification.importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(qualification.importlib.metadata, "distribution", missing)
+    manifest = {}
+    with pytest.raises(QualificationError, match="missing-package is not installed"):
+        verify_python_version_pins({"missing-package": "1.2.3"}, manifest=manifest)
+    assert manifest["python_version_provenance"]["missing-package"] == {
+        "expected_version": "1.2.3", "actual_version": None, "matches_lock": False,
+    }
 
 
 def test_verify_checkout_accepts_exact_clean_commit_and_ds_store(tmp_path: Path):
