@@ -70,10 +70,12 @@ undefined read-during-write behavior. Read the RAM synchronously so the staging
 store has a usable FPGA memory inference path; do not build a combinational
 whole-chunk mux.
 
-Deasserting `arm` discards an unfinished admitted chunk and counts its stored
-bytes as dropped; a rejected chunk's received bytes were already counted.
-Completed banks still drain. Re-arming starts a fresh chunk boundary; sequence
-does not rewind. Source beats while disarmed count only as `unarmed_bytes`.
+At each edge, sampled `arm=0` takes priority over `s_valid`: that beat is
+unarmed and cannot finish a partial chunk. Deasserting `arm` discards an
+unfinished admitted chunk and counts its stored bytes as dropped; a rejected
+chunk's received bytes were already counted. Both kinds of interrupted chunk
+consume their assigned sequence number. Completed banks still drain. Re-arming
+starts a fresh chunk boundary; sequence does not rewind. Source beats while disarmed count only as `unarmed_bytes`.
 This boundary is synthetic and is not camera frame re-synchronization.
 
 Before saturation: `input_bytes = output_bytes + dropped_bytes + buffered_bytes`.
@@ -96,17 +98,17 @@ allocation and are never reused within an epoch, even when a slot is reused.
 
 | Ports | Meaning |
 |---|---|
-| `alloc_valid`, `alloc_ready`, `alloc_slot`, `alloc_lease`, `epoch` | Request / combinational grant; handle is sampled only on handshake |
+| `alloc_valid` (in), `alloc_ready`, `alloc_slot`, `alloc_lease`, `epoch` (out) | Request / combinational grant; handle is sampled only on handshake; current epoch resets to 0 |
 | `commit_valid`, `commit_ready`, `commit_slot`, `commit_lease`, `commit_epoch` | FILLING to READY; writer attests payload visibility |
 | `submit_valid`, `submit_ready`, `submit_slot`, `submit_lease`, `submit_epoch` | READY to INFLIGHT; hardware scheduler must handshake before issuing |
 | `complete_valid`, `complete_ready`, `complete_slot`, `complete_lease`, `complete_epoch`, `complete_success` | A successful matching INFLIGHT completion frees the slot; ready is always 1 to drain late events |
 | `abort_req` | Link loss, memory failure or explicit fault; initiates quarantine |
 | `recover_valid`, `recover_ready`, `fence_done` | Recover handshake requires faulted state and independently proven DMA quiescence |
-| `faulted`, `error_sticky`, `epoch_exhausted`, `lease_exhausted` | Operational stop and sticky diagnosis |
+| `faulted`, `error_sticky`, `epoch_exhausted`, `lease_exhausted`, `counter_saturated` | Outputs: operational stop and sticky diagnosis |
 | `stale_events`, `invalid_events`, `timeout_events`, `fault_events` | Saturating diagnostic counters |
 | `slot_states[3*SLOTS-1:0]` | Slot i state at `[3*i +: 3]` |
 
-`faulted` clears on recovery. The other three status flags are sticky history;
+`faulted` clears on recovery. The other four status flags are sticky history;
 in particular, a previous lease exhaustion must not block allocation in a fenced
 new epoch. Diagnostic event counters count cycles with one or more events in
 that class; `fault_events` counts healthy-to-faulted transitions. Stale events
@@ -126,8 +128,10 @@ though they do not handshake. On any fault edge no allocation, commit or submit
 is accepted; all non-FREE slots become QUARANTINED, including unsent data.
 Completion errors initiate the same global quarantine. Completions cannot free
 quarantine; previously successful/free slots remain FREE. Fault state blocks
-new work until recovery. Stale events received while faulted cannot re-enable
-allocation or alter quarantine.
+new work until recovery. Allocation, commit and submit ready are low while
+faulted and on the recovery edge; a new grant can occur on the following edge.
+Only completions continue to handshake while faulted. Stale events received
+while faulted cannot re-enable allocation or alter quarantine.
 
 The watchdog starts at zero on submit. If no matching completion is accepted
 in the next `TIMEOUT_CYCLES` edges, fault once. A matching completion on the
@@ -172,9 +176,19 @@ The future descriptor channel is ready/valid, stable while stalled, with fields:
 `op[1:0]` (read=0, write=1, flush=2), `nsid[31:0]`, `slba[63:0]`,
 `nlb[31:0]` (positive block count), `payload_bytes[63:0]`, `tag[63:0]`,
 `epoch[31:0]`, `flags[7:0]` (bit 0 requests FUA; other bits zero).
-Read/write byte count must equal `nlb * lba_bytes` without overflow. Flush has
-zero nlb/payload and requires capability-checked adapter support. This logical
-channel does not define a packed memory descriptor or an on-disk record.
+Before accepting a descriptor for storage, validate active NSID and epoch, supported opcode
+and flags, and all counts/ranges without arithmetic overflow. Read/write must
+have positive `nlb`, `payload_bytes = nlb * lba_bytes`, and lie wholly inside
+both the active namespace and configured recording region. Payload size must
+fit the host limit and the discovered controller limit (including MDTS when
+applicable). Readback is rejected while armed. FUA is write-only. Flush has
+zero SLBA, NLB, payload and flags and requires capability-checked adapter support;
+NSID/epoch still match. Opcode 3 and reserved flag bits are invalid. Invalid
+requests are consumed once by a descriptor handshake only when space for their
+local error completion is reserved. Return the supplied tag/epoch with that error;
+do not allocate payload ownership or issue storage I/O. A held invalid request
+cannot generate repeated completions without new handshakes. This logical channel
+does not define a packed memory descriptor or an on-disk record.
 
 Control is AXI-Lite with independent AW/W, strobes, responses and backpressure.
 W09 uses the following 32-bit register offsets; none is implemented by W02:
@@ -190,14 +204,55 @@ W09 uses the following 32-bit register offsets; none is implemented by W02:
 | 0x040..0x06c | RW staged | NSID, NSZE lo/hi, LBA bytes, max command bytes, region SLBA lo/hi, region NLB lo/hi, chunk bytes, timeout cycles, flags (in that order) |
 | 0x100..0x13c | RO snapshot | Armed input, staging output, dropped, unarmed, NVMe-completed, Flush-durable, staging occupancy, DDR occupancy (64-bit lo/hi pairs) |
 
-Reserved bits read zero and writes with reserved bits set fail without changing
-active state. ARM atomically validates/commits staged configuration only when
-stopped, no ownership remains, and downstream is ready; otherwise fails. ARM
-and STOP in one write is invalid. A snapshot freezes all counter pairs together;
-reading a high/low pair must not sample independently changing counters. Ordinary
-NVMe completion and confirmed Flush/FUA durability are separate observations.
-The first recording profile rejects readback while armed; concurrent reads need
-a separately qualified memory/storage arbitration budget.
+The v1 CSR domain uses one clock. Apply WSTRB before decoding a write;
+unselected bytes are ignored. A zero-strobe write or zero effective CONTROL
+value is an OKAY no-op. CONTROL accepts exactly one selected action bit;
+combinations or reserved enabled bits return SLVERR. RO or unmapped writes,
+unmapped reads, and invalid actions/configuration return SLVERR; valid accesses
+return OKAY. Failed writes apply none of the requested actions/configuration,
+but may set the configuration/protocol error flag. Reserved read bits are zero.
+Configuration writes change staging only, even while armed. The v1 staged flags
+register accepts only zero; active configuration remains immutable until ARM.
+
+ARM validates and atomically commits staged configuration only when stopped,
+healthy, no ownership remains, and the downstream path is provisioned. Validate
+positive NSID/NSZE, supported 512/4096-byte LBA geometry, a positive recording
+region within NSZE, and a positive LBA-aligned command limit. Chunk bytes must
+match the compiled chunk size, be LBA-aligned and fit all host/controller limits;
+timeout cycles must match the compiled v1 watchdog setting. Discovery must supply
+real controller limits before hardware ARM; synthetic profile values are never
+substitutes. Failed validation leaves active configuration and armed state intact.
+
+STOP disarms capture. Complete staged chunks and in-flight commands may drain;
+an admitted partial chunk is discarded and counted under the W03 rule. ABORT
+disarms and quarantines ownership. RECOVER requires faulted state, independent
+`fence_done`, and an available next epoch; it does not arm capture. A rejected
+recovery returns SLVERR and retains ownership. Neither STOP nor ABORT proves a
+DMA fence. Readback while armed is rejected; concurrent reads require a separately
+qualified memory/storage arbitration budget.
+
+ERROR_STICKY at 0x00c assigns bits 0..10 respectively to capture loss, watchdog
+timeout, protocol error, AXI memory error, NVMe error, stale handle, configuration
+or range error, epoch exhaustion, lease exhaustion, counter saturation, and
+sequence exhaustion. Bits 11..31 are reserved. These flags clear only on a
+separately fenced cold reset. Historical errors alone do not prevent a healthy
+new epoch from arming.
+
+SNAPSHOT works while stopped or armed. It freezes all counter pairs together
+from their pre-edge values; simultaneous counter events appear in the next
+snapshot. Generation increments with saturation. Split reads never sample live
+counters independently. Future clock crossings need an explicit snapshot
+handshake; this single-clock contract is not a CDC implementation.
+
+NVMe-completed bytes count successful write-operation payload bytes only, once
+per accepted operation after its completion/visibility guard. Failed writes,
+reads, and stale/duplicate completions add nothing. Flush-durable bytes count
+those successful write-operation bytes once when covered by qualified FUA or a
+successful ordered Flush; a later Flush cannot double-count FUA-covered work.
+The scheduler must retain a write cohort/watermark for this accounting. These
+are cumulative operation bytes, not unique on-disk LBAs. Ordinary successful
+write completion alone is not durability. Hardware durability qualification is
+a separate gate; the synthetic oracle's cache rules are not an SSD guarantee.
 
 ## Independent namespace oracle
 
@@ -219,10 +274,27 @@ make model-test PYTHON=.venv-portable/bin/python
 ```
 
 `make check` also includes the oracle alongside the existing tests and canary.
-It needs Icarus; the oracle-only command does not. RTL package runners are
-documented with W03/W04 and must retain seeds, JUnit, waveforms and source hashes.
+It needs Icarus; the oracle-only command does not. RTL package runners retain seeds, JUnit, waveforms and source hashes. Their
+implementation branches add these commands, using the same portable lock:
+
+```sh
+# W03-A, local simulation without Yosys; manifest says simulation_passed only.
+.venv-portable/bin/python scripts/sim_capture.py --simulation-only
+# W03-A, complete portable gate: Icarus plus Yosys memory/structure checks.
+.venv-portable/bin/python scripts/sim_capture.py
+# W04, simulation; its dedicated CI separately runs Yosys structure checks.
+.venv-portable/bin/python scripts/sim_buffer.py
+```
+
+Run these jobs serially on the shared Mac. CI uploads `reports/capture/` or
+`reports/buffer/` with FSTs. Yosys checks portable structure and synchronous
+staging memory inference, not AMD placement, BRAM mapping or timing closure.
 
 ## Deferred gates
+
+W03 here is the fixed-chunk W03-A subgate. Camera TLAST/TKEEP framing, width
+conversion and CDC remain separate work; W04 models ownership, not payload RAM
+or a transport fence. Neither subgate completes the full recording path.
 
 These contracts do not implement external DDR, AXI error handling, CDC,
 TLAST/TKEEP camera records, NVMe adaptation, filesystem/commit metadata or board
