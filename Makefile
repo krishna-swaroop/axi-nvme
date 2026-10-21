@@ -1,7 +1,9 @@
 PYTHON := $(CURDIR)/.venv/bin/python
-.PHONY: check upstream-test qualify budget timing-help
+.PHONY: check model-test upstream-test qualify budget timing-help
 check:
 	$(PYTHON) scripts/check.py
+model-test:
+	$(PYTHON) -m pytest -q tests/test_storage_oracle.py --junitxml=reports/contracts.xml
 upstream-test:
 	$(PYTHON) scripts/upstream.py
 qualify:

@@ -12,6 +12,11 @@ the Micron drives. W01's qualified prototype remains a separate backend.
 | W03 | `rtl/stream/`, `tests/stream/`, dedicated runner/workflow | Non-pausable fixed-chunk staging in synchronous RAM | Complete ordered chunks or explicit loss; stable stalled output; no source backpressure |
 | W04 | `rtl/buffer/`, `tests/buffer/`, dedicated runner/workflow | Buffer ownership, watchdog and fenced recovery | Never reuse an owned/quarantined slot; stale handles cannot release a new lease |
 
+W02 also owns `requirements-portable.lock`, `.gitignore`, `scripts/check.py`, `Makefile`,
+`.github/workflows/contracts.yml` and trigger filters in the existing CI workflow:
+these connect its oracle to automatic checks. Portable-only changes use light
+path-filtered jobs; changing the upstream integration still runs its full gate.
+
 Each is a separate branch/PR. No vendor shell, existing LiteNVMe pins, or board
 files change. Focused local jobs run serially; full upstream qualification stays
 on GitHub CI. Future DDR integration must satisfy the visibility/fencing rules
@@ -101,6 +106,12 @@ allocation and are never reused within an epoch, even when a slot is reused.
 | `stale_events`, `invalid_events`, `timeout_events`, `fault_events` | Saturating diagnostic counters |
 | `slot_states[3*SLOTS-1:0]` | Slot i state at `[3*i +: 3]` |
 
+`faulted` clears on recovery. The other three status flags are sticky history;
+in particular, a previous lease exhaustion must not block allocation in a fenced
+new epoch. Diagnostic event counters count cycles with one or more events in
+that class; `fault_events` counts healthy-to-faulted transitions. Stale events
+set `error_sticky` but do not fault healthy current work.
+
 Allocation may choose any FREE slot; consumers must use the granted handle,
 not assume an allocation algorithm. Commit/submit/complete events for distinct
 slots may occur together. State checks use the state before the edge; no
@@ -185,6 +196,8 @@ stopped, no ownership remains, and downstream is ready; otherwise fails. ARM
 and STOP in one write is invalid. A snapshot freezes all counter pairs together;
 reading a high/low pair must not sample independently changing counters. Ordinary
 NVMe completion and confirmed Flush/FUA durability are separate observations.
+The first recording profile rejects readback while armed; concurrent reads need
+a separately qualified memory/storage arbitration budget.
 
 ## Independent namespace oracle
 
@@ -196,6 +209,18 @@ Writes update volatile cache, FUA makes that write durable, Flush persists prior
 cached writes, and simulated power loss removes volatile-only changes. Model
 write atomicity is a test convention, not a power-failure guarantee for drives.
 No DUT queue, PRP, CID, TLP encoding or pattern function may be imported.
+
+## Reproduce the contract/oracle gate
+
+```sh
+python3 -m venv .venv-portable
+.venv-portable/bin/python -m pip install -r requirements-portable.lock
+make model-test PYTHON=.venv-portable/bin/python
+```
+
+`make check` also includes the oracle alongside the existing tests and canary.
+It needs Icarus; the oracle-only command does not. RTL package runners are
+documented with W03/W04 and must retain seeds, JUnit, waveforms and source hashes.
 
 ## Deferred gates
 
